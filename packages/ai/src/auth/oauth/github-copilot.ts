@@ -38,6 +38,12 @@ type DeviceTokenErrorResponse = {
 	interval?: number;
 };
 
+type AutoModeResponse = {
+	available_models: string[];
+	session_token?: string;
+	discounted_costs?: Record<string, number>;
+};
+
 function normalizeDomain(input: string): string | null {
 	const trimmed = input.trim();
 	if (!trimmed) return null;
@@ -192,6 +198,35 @@ async function fetchGitHubCopilotModels(
 		throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
 	}
 	return parseGitHubCopilotModelCatalog(await response.json(), allowPolicyFallback);
+}
+
+/**
+ * Fetch the Copilot "Auto" routing/session token from `/models/session`.
+ * Best-effort: callers treat a failure as "no auto mode" and fall back to
+ * non-discounted dispatch rather than hard-failing the refresh/login.
+ */
+async function fetchGitHubCopilotAutoMode(
+	copilotToken: string,
+	enterpriseDomain: string | undefined,
+	signal: AbortSignal,
+): Promise<AutoModeResponse> {
+	const baseUrl = getGitHubCopilotBaseUrl(copilotToken, enterpriseDomain);
+	const response = await fetch(`${baseUrl}/models/session`, {
+		method: "POST",
+		headers: {
+			Accept: "application/json",
+			"Content-Type": "application/json",
+			Authorization: `Bearer ${copilotToken}`,
+			...COPILOT_HEADERS,
+			"X-GitHub-Api-Version": COPILOT_API_VERSION,
+		},
+		body: JSON.stringify({ auto_mode: { model_hints: ["auto"] } }),
+		signal,
+	});
+	if (!response.ok) {
+		throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
+	}
+	return (await response.json()) as AutoModeResponse;
 }
 
 async function fetchJson(url: string, init: RequestInit): Promise<unknown> {
@@ -356,13 +391,20 @@ async function refreshGitHubCopilotToken(
 	signal: AbortSignal,
 ): Promise<OAuthCredential> {
 	const credentials = await refreshGitHubCopilotAccessToken(refreshToken, enterpriseDomain, signal);
-	const { availableModelIds } = await fetchGitHubCopilotModels(credentials.access, enterpriseDomain, signal, {
-		maxRetries: 0,
-		maxElapsedMs: 0,
-	});
+	const [models, auto] = await Promise.all([
+		fetchGitHubCopilotModels(credentials.access, enterpriseDomain, signal, {
+			maxRetries: 0,
+			maxElapsedMs: 0,
+		}),
+		// /models/session is best-effort; never fail the refresh if it errors.
+		fetchGitHubCopilotAutoMode(credentials.access, enterpriseDomain, signal).catch(() => null),
+	]);
 	return {
 		...credentials,
-		availableModelIds,
+		availableModelIds: models.availableModelIds,
+		sessionToken: auto?.session_token,
+		discountedCosts: auto?.discounted_costs,
+		sessionAvailableModels: auto?.available_models,
 	};
 }
 
@@ -478,9 +520,18 @@ async function loginGitHubCopilot(interaction: ProviderAuthInteraction): Promise
 			interaction.signal,
 		);
 	}
+	// /models/session is best-effort; never fail login if it errors.
+	const auto = await fetchGitHubCopilotAutoMode(
+		credentials.access,
+		enterpriseDomain ?? undefined,
+		interaction.signal,
+	).catch(() => null);
 	return {
 		...credentials,
 		availableModelIds: [...new Set([...models.availableModelIds, ...enabledModelIds])],
+		sessionToken: auto?.session_token,
+		discountedCosts: auto?.discounted_costs,
+		sessionAvailableModels: auto?.available_models,
 	};
 }
 
@@ -503,5 +554,17 @@ export const githubCopilotOAuth: OAuthAuth = {
 			apiKey: credential.access,
 			baseUrl: getGitHubCopilotBaseUrl(credential.access, copilotEnterpriseDomain(credential)),
 		};
+	},
+
+	/** Surface Auto-mode negotiation state so the provider can route `auto` requests. */
+	toEnv(credential) {
+		if (!credential.sessionToken) return undefined;
+		const env: Record<string, string> = {
+			COPILOT_SESSION_TOKEN: credential.sessionToken,
+		};
+		if (Array.isArray(credential.sessionAvailableModels) && credential.sessionAvailableModels.length > 0) {
+			env.COPILOT_AUTO_MODELS = JSON.stringify(credential.sessionAvailableModels);
+		}
+		return env;
 	},
 };
