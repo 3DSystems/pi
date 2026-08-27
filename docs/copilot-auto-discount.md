@@ -171,6 +171,15 @@ stream(model, context, options) {
 ```
 (Same pattern for `streamSimple`.)
 
+**Keep the auth-derived base URL.** `applyAuth` (in `models.ts`) overrides the
+request model's `baseUrl` with the endpoint derived from the token's `proxy-ep`
+(enterprise vs individual). When `resolveAuto` substitutes the concrete catalog
+model, it must preserve that: catalog models hardcode
+`https://api.individual.githubcopilot.com`, and discarding the auth-derived URL
+redirects enterprise requests to the individual host → **421 Misdirected
+Request**. The resolved model is built as `{ ...concrete, baseUrl: model.baseUrl }`
+so routing always targets the same proxy the concrete models use.
+
 ### Error handling (matches design doc)
 - `/models/session` failure → `.catch(() => null)` → no auto data; falls back to
   non-discounted dispatch. **Never hard-fails login/refresh.**

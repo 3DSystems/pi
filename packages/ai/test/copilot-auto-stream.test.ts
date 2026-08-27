@@ -70,10 +70,12 @@ describe("GitHub Copilot Auto routing", () => {
 		const captured = {
 			headers: undefined as CapturedHeaders,
 			body: null as unknown,
+			url: "" as string,
 			calls: 0,
 		};
 		const fetchMock = vi.fn(async (_input: unknown, init?: RequestInit): Promise<Response> => {
 			captured.calls += 1;
+			captured.url = String(_input);
 			captured.headers = init?.headers;
 			captured.body = init?.body;
 			return responsesSse();
@@ -87,11 +89,12 @@ describe("GitHub Copilot Auto routing", () => {
 		extra?: {
 			sessionToken?: string;
 			sessionAvailableModels?: string[];
+			testAccess?: string;
 		},
 	) {
 		return store.modify("github-copilot", async () => ({
 			type: "oauth" as const,
-			access: testAccess,
+			access: extra?.testAccess ?? testAccess,
 			refresh: "ghu_refresh_token",
 			expires: Date.now() + 60 * 60 * 1000,
 			sessionToken: extra?.sessionToken ?? "sess-token-123",
@@ -126,6 +129,28 @@ describe("GitHub Copilot Auto routing", () => {
 		// Streaming completes normally with text.
 		const text = result.content.map((block) => (block.type === "text" ? block.text : "")).join("");
 		expect(text).toContain("Hello");
+	});
+
+	it("routes to the auth-derived proxy endpoint, not the hardcoded individual host", async () => {
+		const { store, models } = buildModels();
+		await setupCredential(store, {
+			sessionToken: "sess-token-123",
+			sessionAvailableModels: ["gpt-5.6-sol"],
+			testAccess: "tid=test;exp=9999999999;proxy-ep=proxy.enterprise.githubcopilot.com;",
+		});
+
+		const autoModel = models.getModel("github-copilot", "auto");
+		expect(autoModel).toBeDefined();
+		if (!autoModel) return;
+
+		const captured = captureFetch();
+
+		await models.completeSimple(autoModel, context);
+
+		// The request must go to the enterprise host derived from the token's
+		// proxy-ep, not the catalog default individual host (421 Misdirected).
+		expect(captured.url).toContain("https://api.enterprise.githubcopilot.com");
+		expect(captured.url).not.toContain("api.individual.githubcopilot.com");
 	});
 });
 

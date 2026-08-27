@@ -124,7 +124,10 @@ export function githubCopilotProvider(): Provider<CopilotApi> {
 		const concrete = pickConcreteModel(sessionAvailableModels, context);
 		if (!concrete) return undefined;
 
-		const resolvedModel = { ...concrete };
+		// The catalog model carries a hardcoded individual endpoint; keep the
+		// auth-derived proxy endpoint (enterprise/individual) from the original
+		// request model so routing never redirects to the wrong host.
+		const resolvedModel = { ...concrete, baseUrl: model.baseUrl };
 		const headers =
 			sessionToken !== undefined
 				? { ...(options?.headers ?? {}), "Copilot-Session-Token": sessionToken }
