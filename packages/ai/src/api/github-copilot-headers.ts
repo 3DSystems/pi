@@ -23,6 +23,7 @@ export function hasCopilotVisionInput(messages: Message[]): boolean {
 export function buildCopilotDynamicHeaders(params: {
 	messages: Message[];
 	hasImages: boolean;
+	sessionToken?: string;
 }): Record<string, string> {
 	const headers: Record<string, string> = {
 		"X-Initiator": inferCopilotInitiator(params.messages),
@@ -31,6 +32,10 @@ export function buildCopilotDynamicHeaders(params: {
 
 	if (params.hasImages) {
 		headers["Copilot-Vision-Request"] = "true";
+	}
+
+	if (params.sessionToken) {
+		headers["Copilot-Session-Token"] = params.sessionToken;
 	}
 
 	return headers;

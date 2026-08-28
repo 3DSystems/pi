@@ -31,6 +31,13 @@ export interface OAuthCredentials {
 /** Stored canonical OAuth credential. */
 export interface OAuthCredential extends OAuthCredentials {
 	type: "oauth";
+
+	/** GitHub Copilot Auto-mode negotiated session token (`/models/session`). */
+	sessionToken?: string;
+	/** GitHub Copilot Auto-mode discounted costs keyed by model id (`/models/session`). */
+	discountedCosts?: Record<string, number>;
+	/** GitHub Copilot Auto-mode server-selected candidate models (`available_models`). */
+	sessionAvailableModels?: string[];
 }
 
 /** One type-tagged credential per provider — the shape of today's auth.json. */
@@ -227,6 +234,15 @@ export interface OAuthAuth {
 	 * can load the implementation on first use.
 	 */
 	toAuth(credential: OAuthCredential): Promise<ModelAuth>;
+
+	/**
+	 * Optional side-effect-free derivation of provider-scoped environment values
+	 * merged into every resolved request's `env`. Lets a provider surface runtime
+	 * negotiation state stored on the credential without global mutable state.
+	 * GitHub Copilot uses this to expose Auto-mode session data to its stream
+	 * wrapper for routing.
+	 */
+	toEnv?(credential: OAuthCredential): ProviderEnv | undefined | Promise<ProviderEnv | undefined>;
 }
 
 /**

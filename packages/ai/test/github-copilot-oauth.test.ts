@@ -160,7 +160,80 @@ describe("GitHub Copilot OAuth device flow", () => {
 		await store.modify("github-copilot", async () => ({ ...credentials, type: "oauth" }));
 		const models = createModels({ credentials: store });
 		models.setProvider(githubCopilotProvider());
-		expect((await models.getAvailable("github-copilot")).map((model) => model.id)).toEqual(["gpt-4.1"]);
+		expect((await models.getAvailable("github-copilot")).map((model) => model.id)).toEqual(["auto", "gpt-4.1"]);
+	});
+
+	it("stores auto-mode session token, discounted costs, and available models from /models/session", async () => {
+		const accessToken = "tid=test;exp=9999999999;proxy-ep=proxy.individual.githubcopilot.com;";
+		const modelsUrl = "https://api.individual.githubcopilot.com/models";
+		const sessionUrl = "https://api.individual.githubcopilot.com/models/session";
+
+		const fetchMock = vi.fn(async (input: unknown, init?: RequestInit): Promise<Response> => {
+			const url = getUrl(input);
+
+			if (url.includes("/copilot_internal/v2/token")) {
+				return jsonResponse({ token: accessToken, expires_at: 9999999999 });
+			}
+
+			if (url === modelsUrl) {
+				return jsonResponse({
+					data: [
+						{
+							id: "gpt-5.6-sol",
+							model_picker_enabled: true,
+							capabilities: { supports: { tool_calls: true } },
+						},
+					],
+				});
+			}
+
+			if (url === sessionUrl) {
+				expect(init?.method).toBe("POST");
+				expect(init?.headers).toMatchObject({ Authorization: `Bearer ${accessToken}` });
+				expect(String(init?.body)).toContain("auto_mode");
+				return jsonResponse({
+					session_token: "sess-token-123",
+					discounted_costs: { "gpt-5.6-sol": 0.2, "claude-sonnet-5": 0.15 },
+					available_models: ["gpt-5.6-sol", "claude-sonnet-5"],
+				});
+			}
+
+			throw new Error(`Unexpected fetch URL: ${url}`);
+		});
+
+		vi.stubGlobal("fetch", fetchMock);
+
+		const credentials = await githubCopilotOAuth.refresh(
+			{
+				type: "oauth",
+				access: "old-access-token",
+				refresh: "ghu_refresh_token",
+				expires: 0,
+			},
+			neverAbortedSignal,
+		);
+
+		expect(credentials.sessionToken).toBe("sess-token-123");
+		expect(credentials.discountedCosts).toEqual({ "gpt-5.6-sol": 0.2, "claude-sonnet-5": 0.15 });
+		expect(credentials.sessionAvailableModels).toEqual(["gpt-5.6-sol", "claude-sonnet-5"]);
+	});
+
+	it("surfaces session token, auto models, and discounted costs via toEnv", async () => {
+		const env = await githubCopilotOAuth.toEnv?.({
+			type: "oauth",
+			access: testCopilotAccessToken,
+			refresh: "ghu_refresh_token",
+			expires: Date.now() + 60 * 60 * 1000,
+			sessionToken: "sess-token-123",
+			discountedCosts: { "gpt-5.6-sol": 0.2, "claude-sonnet-5": 0.15 },
+			sessionAvailableModels: ["gpt-5.6-sol", "claude-sonnet-5"],
+		});
+
+		expect(env).toMatchObject({
+			COPILOT_SESSION_TOKEN: "sess-token-123",
+		});
+		expect(JSON.parse(env!.COPILOT_AUTO_MODELS)).toEqual(["gpt-5.6-sol", "claude-sonnet-5"]);
+		expect(JSON.parse(env!.COPILOT_DISCOUNTED_COSTS)).toEqual({ "gpt-5.6-sol": 0.2, "claude-sonnet-5": 0.15 });
 	});
 
 	it("falls back to explicitly enabled policy models when the picker catalog is empty", async () => {
@@ -196,7 +269,7 @@ describe("GitHub Copilot OAuth device flow", () => {
 		await store.modify("github-copilot", async () => ({ ...credentials, type: "oauth" }));
 		const models = createModels({ credentials: store });
 		models.setProvider(githubCopilotProvider());
-		expect((await models.getAvailable("github-copilot")).map((model) => model.id)).toEqual(["gpt-4.1"]);
+		expect((await models.getAvailable("github-copilot")).map((model) => model.id)).toEqual(["auto", "gpt-4.1"]);
 	});
 
 	it("does not fall back to policy models for non-Individual accounts", async () => {

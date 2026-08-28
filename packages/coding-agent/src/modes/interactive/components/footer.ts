@@ -51,10 +51,16 @@ export class FooterComponent implements Component {
 	private autoCompactEnabled = true;
 	private session: AgentSession;
 	private footerData: ReadonlyFooterDataProvider;
+	private autoDiscounts: Readonly<Record<string, number>> = {};
+	private autoDiscountsLoaded = false;
+	private autoInfoChangeCallback?: () => void;
 
 	constructor(session: AgentSession, footerData: ReadonlyFooterDataProvider) {
 		this.session = session;
 		this.footerData = footerData;
+		// Load Copilot Auto discounts up front so they're present on first render
+		// (not only after a message_end), then re-render once available.
+		void this.loadAutoDiscounts();
 	}
 
 	setSession(session: AgentSession): void {
@@ -63,6 +69,52 @@ export class FooterComponent implements Component {
 
 	setAutoCompactEnabled(enabled: boolean): void {
 		this.autoCompactEnabled = enabled;
+	}
+
+	/**
+	 * Register a callback fired once the async Copilot Auto discount map is
+	 * loaded, so the UI can re-render the footer with the discount label.
+	 */
+	onAutoInfoChange(callback: () => void): void {
+		this.autoInfoChangeCallback = callback;
+	}
+
+	/**
+	 * Async-load the Copilot Auto discount map (best-effort, cached). Safe to
+	 * call after auth is available; no-ops once already loaded.
+	 */
+	async loadAutoDiscounts(): Promise<void> {
+		if (this.autoDiscountsLoaded) return;
+		this.autoDiscountsLoaded = true;
+		try {
+			this.autoDiscounts = await this.session.modelRuntime.getCopilotAutoDiscounts();
+		} catch {
+			this.autoDiscounts = {};
+		}
+		this.autoInfoChangeCallback?.();
+	}
+
+	/**
+	 * Best-effort discount lookup for a concrete model id. The server may echo a
+	 * dated/versioned id (`claude-haiku-4-5-20251001`) that differs from the
+	 * catalog/discount key (`claude-haiku-4.5`) in both separators and a date
+	 * suffix. Match the longest discount key whose normalized form is a prefix of
+	 * the normalized concrete id, falling back to exact match.
+	 */
+	private lookupDiscount(concreteId: string): number | undefined {
+		if (this.autoDiscounts[concreteId] !== undefined) return this.autoDiscounts[concreteId];
+		const normalize = (id: string) => id.replace(/[._-]+/g, "");
+		const concreteNorm = normalize(concreteId);
+		let best: number | undefined;
+		let bestLen = 0;
+		for (const [key, value] of Object.entries(this.autoDiscounts)) {
+			const keyNorm = normalize(key);
+			if (concreteNorm.startsWith(keyNorm) && keyNorm.length > bestLen) {
+				best = value;
+				bestLen = keyNorm.length;
+			}
+		}
+		return best;
 	}
 
 	/**
@@ -168,6 +220,21 @@ export class FooterComponent implements Component {
 		// Add model name on the right side, plus thinking level if model supports it
 		const modelName = state.model?.id || "no-model";
 
+		// For Copilot Auto, surface the concrete model routed for the most recent
+		// assistant turn (its `.model` is the concrete id) plus the discount %, e.g.
+		// `auto → gpt-5.4 (20% off)`. Before any turn has resolved a concrete model
+		// the routed model is unavailable, so fall back to showing just `auto`.
+		let autoConcrete: string | undefined;
+		if (state.model?.provider === "github-copilot" && state.model.id === "auto") {
+			const lastAssistant = this.session.messages
+				.slice()
+				.reverse()
+				.find((m) => m.role === "assistant");
+			if (lastAssistant && lastAssistant.role === "assistant") {
+				autoConcrete = lastAssistant.model;
+			}
+		}
+
 		let statsLeftWidth = visibleWidth(statsLeft);
 
 		// If statsLeft is too wide, truncate it
@@ -181,7 +248,15 @@ export class FooterComponent implements Component {
 
 		// Add thinking level indicator if model supports reasoning
 		let rightSideWithoutProvider = modelName;
-		if (state.model?.reasoning) {
+		if (autoConcrete) {
+			// Copilot Auto: `auto → <concrete> (<discount>% off)`.
+			// The server echoes a dated/versioned concrete id (e.g.
+			// `claude-haiku-4-5-20251001`) that may not exactly match a discounted
+			// catalog key (`claude-haiku-4.5`). Match by longest-key prefix.
+			const discount = this.lookupDiscount(autoConcrete);
+			const discountLabel = discount !== undefined ? ` (${Math.round(discount * 100)}% off)` : "";
+			rightSideWithoutProvider = `auto → ${autoConcrete}${discountLabel}`;
+		} else if (state.model?.reasoning) {
 			const thinkingLevel = state.thinkingLevel || "off";
 			rightSideWithoutProvider =
 				thinkingLevel === "off" ? `${modelName} • thinking off` : `${modelName} • ${thinkingLevel}`;

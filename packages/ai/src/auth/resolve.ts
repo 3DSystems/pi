@@ -172,7 +172,9 @@ async function resolveStoredOAuth(
 	}
 
 	try {
-		return { auth: await oauth.toAuth(credential), source: "OAuth" };
+		const auth = await oauth.toAuth(credential);
+		const env = await oauth.toEnv?.(credential);
+		return { auth, source: "OAuth", ...(env ? { env } : {}) };
 	} catch (error) {
 		throw new ModelsError("oauth", `OAuth auth derivation failed for ${providerId}`, { cause: error });
 	}
