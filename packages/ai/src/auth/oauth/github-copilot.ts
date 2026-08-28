@@ -565,6 +565,9 @@ export const githubCopilotOAuth: OAuthAuth = {
 		if (Array.isArray(credential.sessionAvailableModels) && credential.sessionAvailableModels.length > 0) {
 			env.COPILOT_AUTO_MODELS = JSON.stringify(credential.sessionAvailableModels);
 		}
+		if (credential.discountedCosts && Object.keys(credential.discountedCosts).length > 0) {
+			env.COPILOT_DISCOUNTED_COSTS = JSON.stringify(credential.discountedCosts);
+		}
 		return env;
 	},
 };

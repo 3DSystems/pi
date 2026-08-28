@@ -609,6 +609,9 @@ export class InteractiveMode {
 		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
 		this.footer = new FooterComponent(this.session, this.footerDataProvider);
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
+		this.footer.onAutoInfoChange(() => {
+			if (this.isInitialized) this.ui.requestRender();
+		});
 		this.footerContainer = new Container();
 		this.footerContainer.addChild(this.footer);
 
@@ -3313,6 +3316,9 @@ export class InteractiveMode {
 					this.streamingComponent = undefined;
 					this.streamingMessage = undefined;
 					this.footer.invalidate();
+					// Load Copilot Auto discount data once available so the footer can
+					// show `auto → <model> (<discount>% off)`.
+					void this.footer.loadAutoDiscounts().then(() => this.ui.requestRender());
 				}
 				this.ui.requestRender();
 				break;

@@ -180,6 +180,25 @@ redirects enterprise requests to the individual host → **421 Misdirected
 Request**. The resolved model is built as `{ ...concrete, baseUrl: model.baseUrl }`
 so routing always targets the same proxy the concrete models use.
 
+### Footer display: `auto → <model> (<discount>% off)`
+
+When `auto` is selected, the bottom-right footer shows the concrete model the
+server routed for the most recent assistant turn plus its discount, e.g.
+`auto → gpt-5.4 (20% off)`. Before any turn has resolved a concrete model it
+shows just `auto`.
+
+- The concrete model comes from the last assistant message's `.model` — when
+the provider routes `auto` through a concrete catalog model, that id lands on
+`message.model` naturally. So no stream-wrapping is needed to surface it.
+- The discount comes from the stored credential's `discountedCosts[concrete]`
+(0.2 → 20% off). `ModelRuntime.getCopilotAutoDiscounts()` reads it from the
+github-copilot credential; `FooterComponent.loadAutoDiscounts()` caches it
+(async, best-effort) and re-renders once loaded.
+- Files: `packages/coding-agent/src/core/model-runtime.ts`
+(`getCopilotAutoDiscounts`), `.../modes/interactive/components/footer.ts`
+(render + async load), `.../modes/interactive/interactive-mode.ts` (wiring +
+re-render on message_end).
+
 ### Error handling (matches design doc)
 - `/models/session` failure → `.catch(() => null)` → no auto data; falls back to
   non-discounted dispatch. **Never hard-fails login/refresh.**

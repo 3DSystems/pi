@@ -25,6 +25,7 @@ function createSession(options: {
 	compactionUsage?: AssistantUsage;
 	toolUsage?: AssistantUsage;
 	usingSubscription?: boolean;
+	messages?: Array<{ role: string; model?: string }>;
 }): AgentSession {
 	const usage = options.usage;
 	const entries: Array<Record<string, unknown>> = [];
@@ -79,6 +80,7 @@ function createSession(options: {
 			getCwd: () => "/tmp/project",
 		},
 		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
+		messages: options.messages ?? [],
 		modelRuntime: {
 			isUsingSubscription: () => options.usingSubscription ?? false,
 		},
@@ -248,5 +250,56 @@ describe("FooterComponent width handling", () => {
 
 		expect(stats).toContain("$1.234");
 		expect(stats).not.toContain("(sub)");
+	});
+
+	it("shows Copilot Auto with the routed concrete model and discount", async () => {
+		const session = createSession({
+			sessionName: "",
+			provider: "github-copilot",
+			modelId: "auto",
+			reasoning: true,
+			messages: [{ role: "assistant", model: "gpt-5.4" }],
+		});
+
+		session.modelRuntime.getCopilotAutoDiscounts = async () => ({ "gpt-5.4": 0.2 });
+
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		await footer.loadAutoDiscounts();
+
+		expect(stripAnsi(footer.render(120)[1])).toContain("auto → gpt-5.4 (20% off)");
+	});
+
+	it("matches the discount for a dated server-echoed concrete id", async () => {
+		const session = createSession({
+			sessionName: "",
+			provider: "github-copilot",
+			modelId: "auto",
+			reasoning: true,
+			messages: [{ role: "assistant", model: "claude-haiku-4-5-20251001" }],
+		});
+
+		session.modelRuntime.getCopilotAutoDiscounts = async () => ({ "claude-haiku-4.5": 0.2 });
+
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		await footer.loadAutoDiscounts();
+
+		expect(stripAnsi(footer.render(120)[1])).toContain("auto → claude-haiku-4-5-20251001 (20% off)");
+	});
+
+	it("shows just auto before any assistant turn has routed a concrete model", () => {
+		const session = createSession({
+			sessionName: "",
+			provider: "github-copilot",
+			modelId: "auto",
+			reasoning: true,
+		});
+
+		session.modelRuntime.getCopilotAutoDiscounts = async () => ({ "gpt-5.4": 0.2 });
+
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		expect(stripAnsi(footer.render(120)[1])).toContain("auto");
 	});
 });

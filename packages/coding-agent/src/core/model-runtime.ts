@@ -558,6 +558,17 @@ export class ModelRuntime implements Models {
 		return this.credentials.list(options);
 	}
 
+	/**
+	 * GitHub Copilot Auto-mode discounted costs keyed by concrete model id
+	 * (`/models/session`). Returns an empty map when no copilot credential or
+	 * discount data is present.
+	 */
+	async getCopilotAutoDiscounts(options?: AuthOperationOptions): Promise<Readonly<Record<string, number>>> {
+		const credential = await this.credentials.read("github-copilot", options);
+		if (credential?.type !== "oauth") return {};
+		return credential.discountedCosts ?? {};
+	}
+
 	getProviderAuthStatus(providerId: string): AuthStatus {
 		if (this.credentials.hasRuntimeApiKey(providerId)) return { configured: true, source: "runtime" };
 		if (this.snapshot.storedProviders.has(providerId)) return { configured: true, source: "stored" };

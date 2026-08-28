@@ -218,6 +218,24 @@ describe("GitHub Copilot OAuth device flow", () => {
 		expect(credentials.sessionAvailableModels).toEqual(["gpt-5.6-sol", "claude-sonnet-5"]);
 	});
 
+	it("surfaces session token, auto models, and discounted costs via toEnv", async () => {
+		const env = await githubCopilotOAuth.toEnv?.({
+			type: "oauth",
+			access: testCopilotAccessToken,
+			refresh: "ghu_refresh_token",
+			expires: Date.now() + 60 * 60 * 1000,
+			sessionToken: "sess-token-123",
+			discountedCosts: { "gpt-5.6-sol": 0.2, "claude-sonnet-5": 0.15 },
+			sessionAvailableModels: ["gpt-5.6-sol", "claude-sonnet-5"],
+		});
+
+		expect(env).toMatchObject({
+			COPILOT_SESSION_TOKEN: "sess-token-123",
+		});
+		expect(JSON.parse(env!.COPILOT_AUTO_MODELS)).toEqual(["gpt-5.6-sol", "claude-sonnet-5"]);
+		expect(JSON.parse(env!.COPILOT_DISCOUNTED_COSTS)).toEqual({ "gpt-5.6-sol": 0.2, "claude-sonnet-5": 0.15 });
+	});
+
 	it("falls back to explicitly enabled policy models when the picker catalog is empty", async () => {
 		const credentials = await refreshGitHubCopilotModelsForTest([
 			{
